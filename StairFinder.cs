@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -23,11 +24,15 @@ namespace CgStairFinder
 
     public class CgMapStairFinder
     {
-        public FileInfo File { get; }
+        private readonly MemoryStream ms;
 
         public CgMapStairFinder(FileInfo file)
         {
-            this.File = file;
+            using (var stream = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                ms = new MemoryStream();
+                stream.CopyTo(ms);
+            }
         }
 
         static StairType GetStType(ushort gnum)
@@ -134,15 +139,14 @@ namespace CgStairFinder
         {
             var result = new List<CgStair>();
 
-
             // http://cgsword.com/filesystem_graphicmap.htm#mapdat 地圖檔解析
             int width, height, sectionOffset;
-            using (var stream = File.Open(FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var br = new BinaryReader(stream))
+            using (ms)
+            using (var br = new BinaryReader(ms))
             {
                 // 檔頭的頭3字節為固定字符MAP，隨後9字節均為0/空白
                 // start: 12
-                stream.Seek(12, SeekOrigin.Begin);
+                ms.Seek(12, SeekOrigin.Begin);
                 // 2個DWORD(4字節)的數據，第1個表示地圖長度-東(W)，第2個表示地圖長度-南(H)
                 width = br.ReadInt32();
                 height = br.ReadInt32();
@@ -154,8 +158,8 @@ namespace CgStairFinder
                     for (var j = 0; j < width; j++)
                     {
                         // 移到場景轉換數據塊
-                        stream.Seek(20 + (j + i * width) * 2, SeekOrigin.Begin);
-                        stream.Seek(sectionOffset * 2, SeekOrigin.Current);
+                        ms.Seek(20 + (j + i * width) * 2, SeekOrigin.Begin);
+                        ms.Seek(sectionOffset * 2, SeekOrigin.Current);
 
                         /*
                          * 49154 怪物?
@@ -168,7 +172,7 @@ namespace CgStairFinder
                         if (target == 49155)
                         {
                             // 回物件數據塊取樓梯編號
-                            stream.Seek(-sectionOffset - 2, SeekOrigin.Current);
+                            ms.Seek(-sectionOffset - 2, SeekOrigin.Current);
                             ushort gnum = br.ReadUInt16();
                             result.Add(new CgStair { East = j, South = i, Type = GetStType(gnum) });
                         }
