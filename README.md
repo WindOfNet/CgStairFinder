@@ -1,0 +1,2 @@
+# CgStairFinder
+.dat analysis sample
