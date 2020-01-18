@@ -19,6 +19,7 @@ namespace CgStairFinder
             public string MapCode { get; set; }
             public string MapName { get; set; }
             public List<CgStair> CgStairs { get; set; }
+            public DateTime DetectTime { get; set; }
         }
 
         public Main()
@@ -183,7 +184,7 @@ namespace CgStairFinder
                 }
                 else
                 {
-                    logs[lastFile.Name] = new Log { MapCode = lastFile.Name, MapName = mapName, CgStairs = cgStairs };
+                    logs[lastFile.Name] = new Log { MapCode = lastFile.Name, MapName = mapName, CgStairs = cgStairs, DetectTime = DateTime.Now };
 
                     foreach (var c in cgStairs)
                     {
@@ -314,9 +315,9 @@ namespace CgStairFinder
         private void Button4_Click(object sender, EventArgs e)
         {
             var tmpPath = Path.GetTempFileName();
-            foreach (var kv in logs.OrderBy(x => x.Value.MapName))
+            foreach (var kv in logs.OrderBy(x => x.Value.DetectTime))
             {
-                var text = $"{kv.Key}";
+                var text = $"{kv.Value.DetectTime.ToString("yyyy-MM-dd HH:mm:ss")} {kv.Key}";
                 if (!string.IsNullOrEmpty(kv.Value.MapName)) { text += $"({kv.Value.MapName})"; }
                 text += ": ";
 
@@ -338,10 +339,6 @@ namespace CgStairFinder
             }
 
             Process.Start("notepad.exe", tmpPath);
-
-            //var f = new LogViewer();
-            //f.Logs = logs;
-            //f.Show(this);
         }
 
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
