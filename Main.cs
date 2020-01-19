@@ -6,8 +6,13 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Security;
 using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace CgStairFinder
@@ -21,6 +26,15 @@ namespace CgStairFinder
             public List<CgStair> CgStairs { get; set; }
             public DateTime DetectTime { get; set; }
         }
+
+        [DataContract]
+        public class GithubRelease
+        {
+            [DataMember(Name = "name")]
+            public string Name { get; set; }
+        }
+
+        const string version = "3.2";
 
         public Main()
         {
@@ -42,6 +56,32 @@ namespace CgStairFinder
 
         private void Main_Load(object sender, EventArgs e)
         {
+            Task.Factory.StartNew(() =>
+            {
+                try
+                {
+                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/windofnet/CgStairFinder/releases/latest");
+                    request.UserAgent = nameof(CgStairFinder);
+                    using (var response = request.GetResponse())
+                    using (var sr = new StreamReader(response.GetResponseStream()))
+                    {
+                        var json = sr.ReadToEnd();
+                        var js = new DataContractJsonSerializer(typeof(GithubRelease));
+                        var githubRelease = (GithubRelease)js.ReadObject(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+                        if (githubRelease.Name != version)
+                        {
+                            var result = MessageBox.Show("發現有更新版本, 是否要前往下載？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                            if (result == DialogResult.Yes)
+                            {
+                                Process.Start("https://github.com/WindOfNet/CgStairFinder/releases/latest");
+                            }
+                        }
+                    }
+                }
+                catch { }
+            });
+
             ShowCgDir();
             CgListReload();
         }
@@ -129,38 +169,37 @@ namespace CgStairFinder
             this.timer1.Interval = (int)this.numericUpDown1.Value * 1000;
 
             int? hProcess = null;
-            var mapName = string.Empty;
-
-            if (comboBox1.SelectedIndex > 0)
-            {
-                var p = (Process)comboBox1.SelectedItem;
-                if (p.HasExited)
-                {
-                    throw new Exception();
-                }
-
-                hProcess = OpenProcess(0x1F0FFF, false, p.Id);
-
-                if (hProcess.HasValue)
-                {
-                    var readMapNameBuffer = new byte[32];
-                    ReadProcessMemory(hProcess.Value, 0x95C870, readMapNameBuffer, readMapNameBuffer.Length, 0);
-                    mapName = Encoding.Default.GetString(readMapNameBuffer.TakeWhile(x => x != 0).ToArray());
-                }
-
-                if (!string.IsNullOrEmpty(mapName))
-                {
-                    this.Text = mapName;
-                }
-            }
+            var mapName = string.Empty; // e.g. 法蘭城
+            var mapFileNameSearchPattern = "*.dat"; // search pattern
 
             try
             {
-                var lastFile = new DirectoryInfo($"{Settings.Default.cgDir}\\map").GetFiles("*.dat", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
-                if (lastFile is null)
+                if (comboBox1.SelectedIndex > 0)
                 {
-                    return;
+                    var p = (Process)comboBox1.SelectedItem;
+                    if (p.HasExited)
+                    {
+                        throw new Exception();
+                    }
+
+                    hProcess = OpenProcess(0x1F0FFF, false, p.Id);
+
+                    if (hProcess.HasValue)
+                    {
+                        var readMapFileNameBuffer = new byte[32];
+                        ReadProcessMemory(hProcess.Value, 0x18CCCE, readMapFileNameBuffer, readMapFileNameBuffer.Length, 0);
+                        mapFileNameSearchPattern = Encoding.Default.GetString(readMapFileNameBuffer.TakeWhile(x => x != 0).ToArray()); // if detect window, it will be 3\2320.dat or 1538.dat
+
+                        var readMapNameBuffer = new byte[32];
+                        ReadProcessMemory(hProcess.Value, 0x95C870, readMapNameBuffer, readMapNameBuffer.Length, 0);
+                        mapName = Encoding.Default.GetString(readMapNameBuffer.TakeWhile(x => x != 0).ToArray());
+                    }
                 }
+
+                // var lastFile = new DirectoryInfo($"{Settings.Default.cgDir}\\map").GetFiles("*.dat", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                mapFileNameSearchPattern = mapFileNameSearchPattern.Substring(mapFileNameSearchPattern.LastIndexOf("\\") + 1);
+                var lastFile = new DirectoryInfo($"{Settings.Default.cgDir}\\map").GetFiles(mapFileNameSearchPattern, SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                this.Text = string.IsNullOrEmpty(mapName) ? lastFile.Name : mapName;
 
                 if (lastFile.FullName.Length > 18)
                 {
@@ -347,6 +386,11 @@ namespace CgStairFinder
             {
                 e.Cancel = MessageBox.Show(this, "是否要結束程式？ (紀錄將會清除)", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.No;
             }
+        }
+
+        private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        {
+            Process.Start("https://github.com/WindOfNet/CgStairFinder");
         }
     }
 }
