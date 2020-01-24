@@ -9,7 +9,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Runtime.InteropServices;
-using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,61 +18,6 @@ namespace CgStairFinder
 {
     public partial class Main : Form
     {
-        public class Log
-        {
-            public string MapCode { get; set; }
-            public string MapName { get; set; }
-            public List<CgStair> CgStairs { get; set; }
-            public DateTime DetectTime { get; set; }
-        }
-
-        public static class MapCounter
-        {
-            class countData
-            {
-                public string MapFileName { get; set; }
-                public string MapName { get; set; }
-            }
-
-            static IDictionary<countData, int> countLog = new Dictionary<countData, int>();
-
-            public static void Count(string mapFileName, string mapName)
-            {
-                var countData = countLog.Where(x => x.Key.MapFileName == mapFileName)
-                                        .Where(x => x.Key.MapName == mapName)
-                                        .Select(x => (KeyValuePair<countData, int>?)x)
-                                        .SingleOrDefault();
-
-                if (countData == null)
-                {
-                    countLog.Add(new MapCounter.countData { MapFileName = mapFileName, MapName = mapName }, 1);
-                }
-                else
-                {
-                    countLog[countData.Value.Key]++;
-                }
-            }
-
-            public static string GetMapName(string mapFileName)
-            {
-                var kv = countLog.Where(x => x.Key.MapFileName == mapFileName)
-                                 .OrderByDescending(x => x.Value)
-                                 .Select(x => (KeyValuePair<countData, int>?)x)
-                                 .FirstOrDefault();
-
-                return kv?.Key.MapName ?? mapFileName;
-            }
-        }
-
-        [DataContract]
-        public class GithubRelease
-        {
-            [DataMember(Name = "name")]
-            public string Name { get; set; }
-        }
-
-        const string version = "3.2";
-
         public Main()
         {
             InitializeComponent();
@@ -90,57 +34,46 @@ namespace CgStairFinder
         [DllImport("kernel32.dll")]
         private static extern void CloseHandle(int hObject);
 
-        static IDictionary<string, Log> logs = new Dictionary<string, Log>();
+        static IDictionary<string, DetectLog> logs = new Dictionary<string, DetectLog>();
 
         private void Main_Load(object sender, EventArgs e)
         {
-            //Task.Factory.StartNew(() =>
-            //{
-            //    try
-            //    {
-            //        ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-            //        HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/windofnet/CgStairFinder/releases/latest");
-            //        request.UserAgent = nameof(CgStairFinder);
-            //        using (var response = request.GetResponse())
-            //        using (var sr = new StreamReader(response.GetResponseStream()))
-            //        {
-            //            var json = sr.ReadToEnd();
-            //            var js = new DataContractJsonSerializer(typeof(GithubRelease));
-            //            var githubRelease = (GithubRelease)js.ReadObject(new MemoryStream(Encoding.UTF8.GetBytes(json)));
-            //            if (githubRelease.Name != version)
-            //            {
-            //                var result = MessageBox.Show("發現有更新版本, 是否要前往下載？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-            //                if (result == DialogResult.Yes)
-            //                {
-            //                    Process.Start("https://github.com/WindOfNet/CgStairFinder/releases/latest");
-            //                }
-            //            }
-            //        }
-            //    }
-            //    catch { }
-            //});
 
-            ShowCgDir();
+#if !DEBUG
+            Task.Factory.StartNew(() =>
+            {
+                try
+                {
+                    var currentVersion = Application.ProductVersion.Replace(".0.0", string.Empty);
+
+                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/windofnet/CgStairFinder/releases/latest");
+                    request.UserAgent = nameof(CgStairFinder);
+                    using (var response = request.GetResponse())
+                    using (var sr = new StreamReader(response.GetResponseStream()))
+                    {
+                        var json = sr.ReadToEnd();
+                        var js = new DataContractJsonSerializer(typeof(GithubRelease));
+                        var githubRelease = (GithubRelease)js.ReadObject(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+                        if (githubRelease.Name != currentVersion)
+                        {
+                            var result = MessageBox.Show("發現有更新版本, 是否要前往下載？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                            if (result == DialogResult.Yes)
+                            {
+                                Process.Start("https://github.com/WindOfNet/CgStairFinder/releases/latest");
+                            }
+                        }
+                    }
+                }
+                catch { }
+            });
+#endif
+
+            SetCgDirDisplayText();
             CgListReload(true);
         }
 
-        private void CgListReload(bool selectFirst = false)
-        {
-            comboBox1.Items.Clear();
-            comboBox1.Items.Add("不選擇視窗");
-            comboBox1.Items.AddRange(Process.GetProcessesByName("bluecg"));
-            comboBox1.Items.AddRange(Process.GetProcessesByName("bluehd"));
-            comboBox1.Items.AddRange(Process.GetProcessesByName("cg"));
-            comboBox1.DisplayMember = "MainWindowTitle";
-            comboBox1.SelectedIndex = 0;
-
-            if (selectFirst && comboBox1.Items.Count > 1)
-            {
-                this.comboBox1.SelectedIndex = 1;
-            }
-        }
-
-        private void ShowCgDir()
+        private void SetCgDirDisplayText()
         {
             var cgDir = Settings.Default.cgDir;
 
@@ -164,7 +97,18 @@ namespace CgStairFinder
             folderSelectionDialog.ShowDialog();
             Settings.Default.cgDir = folderSelectionDialog.SelectedPath;
             Settings.Default.Save();
-            ShowCgDir();
+            SetCgDirDisplayText();
+        }
+
+        private void CgListReload(bool selectFirstItem)
+        {
+            comboBox1.Items.Clear();
+            comboBox1.Items.Add("不選擇視窗");
+            comboBox1.Items.AddRange(Process.GetProcessesByName("bluecg"));
+            comboBox1.Items.AddRange(Process.GetProcessesByName("bluehd"));
+            comboBox1.Items.AddRange(Process.GetProcessesByName("cg"));
+            comboBox1.DisplayMember = "MainWindowTitle";
+            this.comboBox1.SelectedIndex = Convert.ToInt32(selectFirstItem && comboBox1.Items.Count > 1);
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -265,7 +209,7 @@ namespace CgStairFinder
                         MapCounter.Count(mapFile.Name, mapName);
                     }
 
-                    logs[mapFile.Name] = new Log { MapCode = mapFile.Name, MapName = mapName, CgStairs = cgStairs, DetectTime = DateTime.Now };
+                    logs[mapFile.Name] = new DetectLog { MapCode = mapFile.Name, CgStairs = cgStairs, DetectTime = DateTime.Now };
 
                     foreach (var c in cgStairs)
                     {
@@ -378,7 +322,7 @@ namespace CgStairFinder
 
         private void button2_Click(object sender, EventArgs e)
         {
-            CgListReload();
+            CgListReload(false);
         }
 
         private void button3_Click(object sender, EventArgs e)
@@ -399,11 +343,8 @@ namespace CgStairFinder
             foreach (var kv in logs.OrderBy(x => x.Value.DetectTime))
             {
                 var text = $"{kv.Value.DetectTime.ToString("yyyy-MM-dd HH:mm:ss")} {kv.Key}";
-                if (!string.IsNullOrEmpty(kv.Value.MapName))
-                {
-                    var mapName = MapCounter.GetMapName(kv.Value.MapCode);
-                    text += $"({mapName})";
-                }
+                var mapName = MapCounter.GetMapName(kv.Value.MapCode);
+                text += $"({mapName})";
                 text += ": ";
 
                 text += string.Join(" | ", kv.Value.CgStairs.OrderBy(x => x.Type).Select(x =>
