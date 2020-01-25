@@ -339,7 +339,15 @@ namespace CgStairFinder
 
         private void Button4_Click(object sender, EventArgs e)
         {
+            if (!logs.Any())
+            {
+                MessageBox.Show("沒有任何紀錄", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             var tmpPath = Path.GetTempFileName();
+            var sb = new StringBuilder();
+
             foreach (var kv in logs.OrderBy(x => x.Value.DetectTime))
             {
                 var text = $"{kv.Value.DetectTime.ToString("yyyy-MM-dd HH:mm:ss")} {kv.Key}";
@@ -361,8 +369,13 @@ namespace CgStairFinder
                     return $"{x.East}, {x.South} -- {type}";
                 }));
 
-                File.AppendAllText(tmpPath, text + "\r\n");
+                sb.AppendLine(text);
             }
+
+            sb.AppendLine();
+            sb.AppendLine();
+            sb.AppendLine("power by CgStairFinder (https://github.com/WindOfNet/CgStairFinder/releases/latest)");
+            File.WriteAllText(tmpPath, sb.ToString());
 
             Process.Start("notepad.exe", tmpPath);
         }
