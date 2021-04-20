@@ -23,6 +23,7 @@ namespace CgStairFinder
             InitializeComponent();
         }
 
+        #region dll import
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")]
@@ -33,12 +34,12 @@ namespace CgStairFinder
         private static extern int OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
         [DllImport("kernel32.dll")]
         private static extern void CloseHandle(int hObject);
+        #endregion
 
         static IDictionary<string, DetectLog> logs = new Dictionary<string, DetectLog>();
 
         private void Main_Load(object sender, EventArgs e)
         {
-
 #if !DEBUG
             Task.Factory.StartNew(() =>
             {
@@ -68,7 +69,6 @@ namespace CgStairFinder
                 catch { }
             });
 #endif
-
             SetCgDirDisplayText();
             CgListReload(true);
         }
@@ -111,6 +111,9 @@ namespace CgStairFinder
             this.comboBox1.SelectedIndex = Convert.ToInt32(selectFirstItem && comboBox1.Items.Count > 1);
         }
 
+        /// <summary>
+        /// 按下開始偵測按鈕觸發
+        /// </summary>
         private void button1_Click(object sender, EventArgs e)
         {
             if (this.timer1.Enabled)
@@ -135,7 +138,6 @@ namespace CgStairFinder
             this.timer1.Interval = 10;
             this.timer1.Start();
             this.button1.Text = "停止偵測";
-            this.numericUpDown1.Enabled = false;
             button2.Enabled = false;
             comboBox1.Enabled = false;
         }
@@ -146,53 +148,51 @@ namespace CgStairFinder
             this.label2.ResetText();
             this.listBox1.Items.Clear();
             this.button1.Text = "開始偵測";
-            this.numericUpDown1.Enabled = true;
             button2.Enabled = true;
             comboBox1.Enabled = true;
         }
 
+        /// <summary>
+        /// 啟動偵測後, 計時器每次的觸發行為
+        /// </summary>
         private void timer1_Tick(object sender, EventArgs e)
         {
-            this.timer1.Interval = (int)this.numericUpDown1.Value * 1000;
-
             int? hProcess = null;
             var mapName = string.Empty; // e.g. 法蘭城
             var mapFile = default(FileInfo);
+            var isSelectdWindow = this.comboBox1.SelectedIndex > 0; // 0 is 不選擇
 
             try
             {
+                // 有選擇視窗
                 if (comboBox1.SelectedIndex > 0)
                 {
                     var p = (Process)comboBox1.SelectedItem;
                     if (p.HasExited)
                     {
-                        throw new Exception();
+                        throw new Exception("視窗偵測失敗");
                     }
 
                     hProcess = OpenProcess(0x1F0FFF, false, p.Id);
 
-                    if (hProcess.HasValue)
-                    {
-                        var readMapNameBuffer = new byte[32];
-                        ReadProcessMemory(hProcess.Value, 0x95C870, readMapNameBuffer, readMapNameBuffer.Length, 0);
-                        mapName = Encoding.Default.GetString(readMapNameBuffer.TakeWhile(x => x != 0).ToArray());
-                    }
-                }
-
-                mapFile = new DirectoryInfo($"{Settings.Default.cgDir}\\map").GetFiles("*.dat", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
-                this.Text = string.IsNullOrEmpty(mapName) ? mapFile.Name : mapName;
-
-                if (mapFile.FullName.Length > 18)
-                {
-                    char[] c = mapFile.FullName.ToCharArray();
-                    Array.Reverse(c);
-                    Array.Resize(ref c, 16);
-                    Array.Reverse(c);
-                    this.label2.Text = $"..{new string(c)}";
+                    // 取地圖名
+                    var readMapNameBuffer = new byte[32];
+                    ReadProcessMemory(hProcess.Value, 0x95C870, readMapNameBuffer, readMapNameBuffer.Length, 0);
+                    mapName = Encoding.Default.GetString(readMapNameBuffer.TakeWhile(x => x != 0).ToArray());
+                    // FIXME: 從記憶體取得檔案, 再到檔案裡找樓梯
+                    // mapFile = ...
+                    // this.Text = mapName;
                 }
                 else
                 {
-                    this.label2.Text = $"{mapFile.FullName}";
+                    mapFile = new DirectoryInfo($"{Settings.Default.cgDir}\\map").GetFiles("*.dat", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                    this.Text = mapFile.Name;
+                }
+
+                this.label2.Text = mapFile.FullName;
+                if (this.label2.Text.Length > 18)
+                {
+                    this.label2.Text = $"{this.label2.Text.Substring(0, 16)} ...";
                 }
 
                 listBox1.Items.Clear();
@@ -201,87 +201,74 @@ namespace CgStairFinder
                 if (cgStairs.Count == 0)
                 {
                     listBox1.Items.Add("沒有找到任何樓梯");
+                    return;
                 }
-                else
+
+                logs[mapFile.Name] = new DetectLog { MapCode = mapFile.Name, MapName = mapName, CgStairs = cgStairs, DetectTime = DateTime.Now };
+
+                foreach (var c in cgStairs)
                 {
-                    if (!string.IsNullOrEmpty(mapName))
+                    string type = CgStair.Translate(c.Type);
+                    if (!isSelectdWindow)
                     {
-                        MapCounter.Count(mapFile.Name, mapName);
+                        listBox1.Items.Add($"東{c.East}, 南{c.South} -- {type}");
+                        continue;
                     }
 
-                    logs[mapFile.Name] = new DetectLog { MapCode = mapFile.Name, CgStairs = cgStairs, DetectTime = DateTime.Now };
+                    int east = 0, south = 0;
+                    byte[] buffer = new byte[32];
+                    ReadProcessMemory(hProcess.Value, 0x95C88C, buffer, 2, 0);
+                    east = BitConverter.ToInt16(buffer, 0);
+                    ReadProcessMemory(hProcess.Value, 0x95C890, buffer, 2, 0);
+                    south = BitConverter.ToInt16(buffer, 0);
 
-                    foreach (var c in cgStairs)
+                    #region 計算樓梯方向
+                    string direction = string.Empty;
+
+                    var r = Math.Atan2(c.East - east, c.South - south) / Math.PI * 180;
+
+                    if (r <= -135 + 22.5 && r >= -135 - 22.5)
                     {
-                        string type = string.Empty;
-                        switch (c.Type)
-                        {
-                            case StairType.Down: type = "下樓"; break;
-                            case StairType.Up: type = "上樓"; break;
-                            case StairType.Jump: type = "可移動"; break;
-                            case StairType.Unknow: type = "不明"; break;
-                        }
-
-                        if (!hProcess.HasValue)
-                        {
-                            listBox1.Items.Add($"東{c.East}, 南{c.South} -- {type}");
-                        }
-                        else
-                        {
-                            int east = 0, south = 0;
-                            byte[] buffer = new byte[32];
-                            ReadProcessMemory(hProcess.Value, 0xBF6B54, buffer, 2, 0);
-                            east = BitConverter.ToInt16(buffer, 0);
-                            ReadProcessMemory(hProcess.Value, 0xBF6C1C, buffer, 2, 0);
-                            south = BitConverter.ToInt16(buffer, 0);
-
-                            string direction = string.Empty;
-
-                            var r = Math.Atan2(c.East - east, c.South - south) / Math.PI * 180;
-
-                            if (r <= -135 + 22.5 && r >= -135 - 22.5)
-                            {
-                                direction = "←";
-                            }
-                            if (r <= -90 + 22.5 && r >= -90 - 22.5)
-                            {
-                                direction = "↙";
-                            }
-                            if (r <= -45 + 22.5 && r >= -45 - 22.5)
-                            {
-                                direction = "↓";
-                            }
-                            if (r <= 0 + 22.5 && r >= 0 - 22.5)
-                            {
-                                direction = "↘";
-                            }
-                            if (r <= 45 + 22.5 && r >= 45 - 22.5)
-                            {
-                                direction = "→";
-                            }
-                            if (r <= 90 + 22.5 && r >= 90 - 22.5)
-                            {
-                                direction = "↗";
-                            }
-                            if (r <= 135 + 22.5 && r >= 135 - 22.5)
-                            {
-                                direction = "↑";
-                            }
-                            if (r < -135 - 22.5 || (r <= 180 + 22.5 && r >= 180 - 22.5))
-                            {
-                                direction = "↖";
-                            }
-
-                            listBox1.Items.Add($"東{c.East}, 南{c.South} {direction} -- {type}");
-                        }
+                        direction = "←";
                     }
+                    if (r <= -90 + 22.5 && r >= -90 - 22.5)
+                    {
+                        direction = "↙";
+                    }
+                    if (r <= -45 + 22.5 && r >= -45 - 22.5)
+                    {
+                        direction = "↓";
+                    }
+                    if (r <= 0 + 22.5 && r >= 0 - 22.5)
+                    {
+                        direction = "↘";
+                    }
+                    if (r <= 45 + 22.5 && r >= 45 - 22.5)
+                    {
+                        direction = "→";
+                    }
+                    if (r <= 90 + 22.5 && r >= 90 - 22.5)
+                    {
+                        direction = "↗";
+                    }
+                    if (r <= 135 + 22.5 && r >= 135 - 22.5)
+                    {
+                        direction = "↑";
+                    }
+                    if (r < -135 - 22.5 || (r <= 180 + 22.5 && r >= 180 - 22.5))
+                    {
+                        direction = "↖";
+                    }
+                    #endregion
+
+                    listBox1.Items.Add($"東{c.East}, 南{c.South} {direction} -- {type}");
                 }
             }
             catch (IOException) { return; }
-            catch (Exception)
+            catch (Exception ex)
             {
                 stop();
-                MessageBox.Show(this, $"發生錯誤, 自動偵測已停止", "訊息", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, $"發生錯誤, 自動偵測已停止\n\n{ex.Message}", "訊息", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             finally
             {
@@ -292,6 +279,9 @@ namespace CgStairFinder
             }
         }
 
+        /// <summary>
+        /// list box 顏色
+        /// </summary>
         private void listBox_DrawItem(object sender, DrawItemEventArgs e)
         {
             e.DrawBackground();
@@ -351,30 +341,20 @@ namespace CgStairFinder
             foreach (var kv in logs.OrderBy(x => x.Value.DetectTime))
             {
                 var text = $"{kv.Value.DetectTime.ToString("yyyy-MM-dd HH:mm:ss")} {kv.Key}";
-                var mapName = MapCounter.GetMapName(kv.Value.MapCode);
+                var mapName = kv.Value.MapName;
                 text += $"({mapName})";
                 text += ": ";
 
-                text += string.Join(" | ", kv.Value.CgStairs.OrderBy(x => x.Type).Select(x =>
-                {
-                    string type = string.Empty;
-                    switch (x.Type)
-                    {
-                        case StairType.Down: type = "下樓"; break;
-                        case StairType.Up: type = "上樓"; break;
-                        case StairType.Jump: type = "可移動"; break;
-                        case StairType.Unknow: type = "不明"; break;
-                    }
-
-                    return $"{x.East}, {x.South} -- {type}";
-                }));
+                text += string.Join(" | ", from a in kv.Value.CgStairs
+                                           orderby a.Type
+                                           select $"{a.East}, {a.South} -- {CgStair.Translate(a.Type)}");
 
                 sb.AppendLine(text);
             }
 
             sb.AppendLine();
             sb.AppendLine();
-            sb.AppendLine("power by CgStairFinder (https://github.com/WindOfNet/CgStairFinder/releases/latest)");
+            sb.AppendLine("powered by CgStairFinder (https://github.com/WindOfNet/CgStairFinder/releases/latest)");
             File.WriteAllText(tmpPath, sb.ToString());
 
             Process.Start("notepad.exe", tmpPath);

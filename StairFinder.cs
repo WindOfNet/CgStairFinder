@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -10,16 +11,27 @@ namespace CgStairFinder
 {
     public enum StairType
     {
+        [Description("上樓")]
         Up, // 上樓
+        [Description("下樓")]
         Down, // 下樓
-        Jump, // 傳送石
+        [Description("可移動")]
+        Jump, // 可移動
+        [Description("不明")]
         Unknow
     }
+
     public struct CgStair
     {
         public int East { get; set; } // 座標 東
         public int South { get; set; } // 座標 南
         public StairType Type { get; set; }
+        public static string Translate(StairType stairType)
+        {
+            var prop = typeof(StairType).GetProperty(Enum.GetName(typeof(StairType), stairType));
+            var attr = (DescriptionAttribute)prop.GetCustomAttributes(typeof(DescriptionAttribute), false)[0];
+            return attr.Description;
+        }
     }
 
     public class CgMapStairFinder
@@ -135,7 +147,7 @@ namespace CgStairFinder
             }
         }
 
-        public List<CgStair> GetStairs()
+        public IList<CgStair> GetStairs()
         {
             var result = new List<CgStair>();
 
