@@ -36,38 +36,46 @@ namespace CgStairFinder
         private static extern void CloseHandle(int hObject);
         #endregion
 
-        static IDictionary<string, DetectLog> logs = new Dictionary<string, DetectLog>();
+        static readonly IDictionary<string, DetectLog> logs = new Dictionary<string, DetectLog>();
 
         private void Main_Load(object sender, EventArgs e)
         {
 #if !DEBUG
-            Task.Factory.StartNew(() =>
+            if (Settings.Default.updateTipCount < 3)
             {
-                try
+                Task.Factory.StartNew(() =>
                 {
-                    var currentVersion = Application.ProductVersion.Replace(".0.0", string.Empty);
-
-                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/windofnet/CgStairFinder/releases/latest");
-                    request.UserAgent = nameof(CgStairFinder);
-                    using (var response = request.GetResponse())
-                    using (var sr = new StreamReader(response.GetResponseStream()))
+                    try
                     {
-                        var json = sr.ReadToEnd();
-                        var js = new DataContractJsonSerializer(typeof(GithubRelease));
-                        var githubRelease = (GithubRelease)js.ReadObject(new MemoryStream(Encoding.UTF8.GetBytes(json)));
-                        if (githubRelease.Name != currentVersion)
+                        var currentVersion = Application.ProductVersion.Replace(".0.0", string.Empty);
+
+                        ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                        HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/windofnet/CgStairFinder/releases/latest");
+                        request.UserAgent = nameof(CgStairFinder);
+                        using (var response = request.GetResponse())
+                        using (var sr = new StreamReader(response.GetResponseStream()))
                         {
-                            var result = MessageBox.Show("發現有更新版本, 是否要前往下載？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                            if (result == DialogResult.Yes)
+                            var json = sr.ReadToEnd();
+                            var js = new DataContractJsonSerializer(typeof(GithubRelease));
+                            var githubRelease = (GithubRelease)js.ReadObject(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+                            if (githubRelease.Name != currentVersion)
                             {
-                                Process.Start("https://github.com/WindOfNet/CgStairFinder/releases/latest");
+                                var result = MessageBox.Show("發現有更新版本, 是否要前往下載？", "提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                                if (result == DialogResult.Yes)
+                                {
+                                    Process.Start("https://github.com/WindOfNet/CgStairFinder/releases/latest");
+                                }
+                                else
+                                {
+                                    Settings.Default.updateTipCount++;
+                                    Settings.Default.Save();
+                                }
                             }
                         }
                     }
-                }
-                catch { }
-            });
+                    catch { }
+                });
+            }
 #endif
             SetCgDirDisplayText();
             CgListReload(true);
@@ -157,6 +165,8 @@ namespace CgStairFinder
         /// </summary>
         private void timer1_Tick(object sender, EventArgs e)
         {
+            this.timer1.Interval = 500;
+
             int? hProcess = null;
             var mapName = string.Empty; // e.g. 法蘭城
             var mapFile = default(FileInfo);
@@ -179,9 +189,16 @@ namespace CgStairFinder
                     var readMapNameBuffer = new byte[32];
                     ReadProcessMemory(hProcess.Value, 0x95C870, readMapNameBuffer, readMapNameBuffer.Length, 0);
                     mapName = Encoding.Default.GetString(readMapNameBuffer.TakeWhile(x => x != 0).ToArray());
-                    // FIXME: 從記憶體取得檔案, 再到檔案裡找樓梯
-                    // mapFile = ...
-                    // this.Text = mapName;
+
+                    // 取當前地圖檔名
+                    var readMapFileBuffer = new byte[32];
+                    ReadProcessMemory(hProcess.Value, 0x18CCC8, readMapFileBuffer, readMapFileBuffer.Length, 0);
+                    var path = Encoding.Default.GetString(readMapFileBuffer.TakeWhile(x => x != 0).ToArray());
+                    mapFile = new FileInfo(Path.Combine(Settings.Default.cgDir, path));
+                    if (!mapFile.Exists)
+                    {
+                        throw new Exception("無法讀取地圖檔");
+                    }
                 }
                 else
                 {
@@ -192,7 +209,11 @@ namespace CgStairFinder
                 this.label2.Text = mapFile.FullName;
                 if (this.label2.Text.Length > 18)
                 {
-                    this.label2.Text = $"{this.label2.Text.Substring(0, 16)} ...";
+                    char[] c = mapFile.FullName.ToCharArray();
+                    Array.Reverse(c);
+                    Array.Resize(ref c, 16);
+                    Array.Reverse(c);
+                    this.label2.Text = $"..{new string(c)}";
                 }
 
                 listBox1.Items.Clear();
@@ -215,51 +236,58 @@ namespace CgStairFinder
                         continue;
                     }
 
-                    int east = 0, south = 0;
-                    byte[] buffer = new byte[32];
-                    ReadProcessMemory(hProcess.Value, 0x95C88C, buffer, 2, 0);
-                    east = BitConverter.ToInt16(buffer, 0);
-                    ReadProcessMemory(hProcess.Value, 0x95C890, buffer, 2, 0);
-                    south = BitConverter.ToInt16(buffer, 0);
+                    // 取當前座標
+                    int? east = default, south = default;
+                    byte[] buffer = new byte[4];
+                    try
+                    {
+                        ReadProcessMemory(hProcess.Value, 0x95C88C, buffer, 4, 0);
+                        east = (int)(BitConverter.ToSingle(buffer, 0) / 64);
+                        ReadProcessMemory(hProcess.Value, 0x95C890, buffer, 4, 0);
+                        south = (int)BitConverter.ToSingle(buffer, 0) / 64;
+                    }
+                    catch { /* 吃掉 */ }
 
-                    #region 計算樓梯方向
                     string direction = string.Empty;
+                    if (east.HasValue && south.HasValue)
+                    {
+                        #region 計算樓梯方向
+                        var r = Math.Atan2(c.East - east.Value, c.South - south.Value) / Math.PI * 180;
 
-                    var r = Math.Atan2(c.East - east, c.South - south) / Math.PI * 180;
-
-                    if (r <= -135 + 22.5 && r >= -135 - 22.5)
-                    {
-                        direction = "←";
+                        if (r <= -135 + 22.5 && r >= -135 - 22.5)
+                        {
+                            direction = "←";
+                        }
+                        if (r <= -90 + 22.5 && r >= -90 - 22.5)
+                        {
+                            direction = "↙";
+                        }
+                        if (r <= -45 + 22.5 && r >= -45 - 22.5)
+                        {
+                            direction = "↓";
+                        }
+                        if (r <= 0 + 22.5 && r >= 0 - 22.5)
+                        {
+                            direction = "↘";
+                        }
+                        if (r <= 45 + 22.5 && r >= 45 - 22.5)
+                        {
+                            direction = "→";
+                        }
+                        if (r <= 90 + 22.5 && r >= 90 - 22.5)
+                        {
+                            direction = "↗";
+                        }
+                        if (r <= 135 + 22.5 && r >= 135 - 22.5)
+                        {
+                            direction = "↑";
+                        }
+                        if (r < -135 - 22.5 || (r <= 180 + 22.5 && r >= 180 - 22.5))
+                        {
+                            direction = "↖";
+                        }
+                        #endregion
                     }
-                    if (r <= -90 + 22.5 && r >= -90 - 22.5)
-                    {
-                        direction = "↙";
-                    }
-                    if (r <= -45 + 22.5 && r >= -45 - 22.5)
-                    {
-                        direction = "↓";
-                    }
-                    if (r <= 0 + 22.5 && r >= 0 - 22.5)
-                    {
-                        direction = "↘";
-                    }
-                    if (r <= 45 + 22.5 && r >= 45 - 22.5)
-                    {
-                        direction = "→";
-                    }
-                    if (r <= 90 + 22.5 && r >= 90 - 22.5)
-                    {
-                        direction = "↗";
-                    }
-                    if (r <= 135 + 22.5 && r >= 135 - 22.5)
-                    {
-                        direction = "↑";
-                    }
-                    if (r < -135 - 22.5 || (r <= 180 + 22.5 && r >= 180 - 22.5))
-                    {
-                        direction = "↖";
-                    }
-                    #endregion
 
                     listBox1.Items.Add($"東{c.East}, 南{c.South} {direction} -- {type}");
                 }
@@ -291,21 +319,20 @@ namespace CgStairFinder
             }
 
             Brush itemColor = Brushes.White;
-            if (((ListBox)sender).Items[e.Index].ToString().Contains("上樓"))
+            if (((ListBox)sender).Items[e.Index].ToString().Contains(Defined.STAIR_TYPE_UP_DISPLAY_TEXT))
             {
                 itemColor = Brushes.SpringGreen;
             }
-            else if (((ListBox)sender).Items[e.Index].ToString().Contains("下樓"))
+            else if (((ListBox)sender).Items[e.Index].ToString().Contains(Defined.STAIR_TYPE_DOWN_DISPLAY_TEXT))
             {
                 itemColor = Brushes.OrangeRed;
             }
-            else if (((ListBox)sender).Items[e.Index].ToString().Contains("可移動"))
+            else if (((ListBox)sender).Items[e.Index].ToString().Contains(Defined.STAIR_TYPE_MOVEABLE_DISPLAY_TEXT))
             {
                 itemColor = Brushes.Silver;
             }
 
             e.Graphics.FillRectangle(itemColor, e.Bounds);
-
             e.Graphics.DrawString(((ListBox)sender).Items[e.Index].ToString(), this.Font, Brushes.Black, e.Bounds);
             e.DrawFocusRectangle();
         }
@@ -340,7 +367,7 @@ namespace CgStairFinder
 
             foreach (var kv in logs.OrderBy(x => x.Value.DetectTime))
             {
-                var text = $"{kv.Value.DetectTime.ToString("yyyy-MM-dd HH:mm:ss")} {kv.Key}";
+                var text = $"{kv.Value.DetectTime:yyyy-MM-dd HH:mm:ss} {kv.Key}";
                 var mapName = kv.Value.MapName;
                 text += $"({mapName})";
                 text += ": ";

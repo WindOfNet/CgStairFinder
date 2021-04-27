@@ -11,13 +11,13 @@ namespace CgStairFinder
 {
     public enum StairType
     {
-        [Description("上樓")]
+        [Description(Defined.STAIR_TYPE_UP_DISPLAY_TEXT)]
         Up, // 上樓
-        [Description("下樓")]
+        [Description(Defined.STAIR_TYPE_DOWN_DISPLAY_TEXT)]
         Down, // 下樓
-        [Description("可移動")]
+        [Description(Defined.STAIR_TYPE_MOVEABLE_DISPLAY_TEXT)]
         Jump, // 可移動
-        [Description("不明")]
+        [Description(Defined.STAIR_TYPE_UNKNOW_DISPLAY_TEXT)]
         Unknow
     }
 
@@ -28,7 +28,7 @@ namespace CgStairFinder
         public StairType Type { get; set; }
         public static string Translate(StairType stairType)
         {
-            var prop = typeof(StairType).GetProperty(Enum.GetName(typeof(StairType), stairType));
+            var prop = typeof(StairType).GetField(Enum.GetName(typeof(StairType), stairType));
             var attr = (DescriptionAttribute)prop.GetCustomAttributes(typeof(DescriptionAttribute), false)[0];
             return attr.Description;
         }
@@ -40,7 +40,7 @@ namespace CgStairFinder
 
         public CgMapStairFinder(FileInfo file)
         {
-            using (var stream = file.Open(FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (var stream = file.OpenRead())
             {
                 ms = new MemoryStream();
                 stream.CopyTo(ms);
