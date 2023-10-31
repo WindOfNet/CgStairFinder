@@ -1,11 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace CgStairFinder
 {
@@ -179,13 +175,12 @@ namespace CgStairFinder
                          * 49162 可過地圖
                          * 49163 法蘭城租屋
                          */
-                        ushort target = br.ReadUInt16();
-
+                        var target = br.ReadUInt16();
                         if (target == 49155)
                         {
                             // 回物件數據塊取樓梯編號
                             ms.Seek(-sectionOffset - 2, SeekOrigin.Current);
-                            ushort gnum = br.ReadUInt16();
+                            var gnum = br.ReadUInt16();
                             result.Add(new CgStair { East = j, South = i, Type = GetStType(gnum) });
                         }
                     }
